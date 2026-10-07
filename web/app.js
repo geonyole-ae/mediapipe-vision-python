@@ -665,8 +665,8 @@ $("fileBtn").onclick = () => $("fileInput").click();
 $("fileInput").onchange = (e) => { openFile(e.target.files[0]); e.target.value = ""; };
 $("sampleBtn").onclick = () => {
   openUrl(SAMPLE_VIDEO, false, "예제 영상");
-  setStatus("예제 영상은 엄지척·브이·검지 위로·엄지 아래 사진으로 만든 영상이라 nike·ok 동작이 없습니다.\n"
-            + "효과가 뜨지 않고 (Thumb_Up)처럼 기본 제스처 이름이 나오는 것이 정상입니다.");
+  setStatus("예제 영상: 한 손 엄지척 → 양손 엄지척(폭죽) → 브이 → 검지 위로 → 엄지 아래 (자막 참고)\n"
+            + "공개 예제 사진으로 만들어서 nike·ok 동작은 들어 있지 않습니다.");
 };
 $("stopBtn").onclick = () => { stopSource(); setStatus("정지했습니다."); };
 $("scoreRange").oninput = (e) => {
