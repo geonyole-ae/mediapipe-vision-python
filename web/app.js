@@ -219,7 +219,7 @@ function openUrl(url, isImage, name = url) {
     video.onerror = () => {
       stopSource();
       setStatus(`동영상을 열 수 없습니다: ${name}
-브라우저가 지원하는 형식(H.264 mp4, WebM)인지 확인하세요.`, true);
+브라우저가 지원하는 형식(H.264 mp4, WebM)인지 확인하세요.\n휴대폰으로 찍은 HEVC(H.265) 영상은 브라우저에 따라 열리지 않습니다.`, true);
     };
     video.src = url;
     video.play().catch(() => {});

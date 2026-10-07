@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# 학습용 원본 영상 (얼굴이 나오므로 공개 저장소에 올리지 않음)
+custom_gesture/videos/

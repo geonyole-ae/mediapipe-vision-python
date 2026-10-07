@@ -101,7 +101,7 @@ python web/serve.py        # http://localhost:8000/web/ 이 자동으로 열림,
 ```
 
 **온라인 데모 (GitHub Pages):** https://geonyole-ae.github.io/mediapipe-vision-python/
-지금 올라가 있는 분류기는 **데모용 임시 모델**입니다. 실제 nike/ok 손동작이 아니라 예제 사진의 엄지척을 `nike`, 브이를 `ok`로 학습했으므로 엄지척과 브이로 시험해 보세요.
+올라가 있는 분류기는 휴대폰 영상 4개(nike 1, ok 1, none 2)로 학습했습니다. 영상마다 뒤 20%를 학습에서 빼고 확인한 정확도는 약 95%입니다 (nike 87%, ok 96%, none 96%). 같은 방·조명에서만 찍었으므로 다른 환경에서는 정확도가 낮을 수 있습니다.
 
 GitHub Pages에 올린 분류기를 바꾸려면, 학습한 뒤 JSON으로 내보내서 커밋·푸시합니다.
 
