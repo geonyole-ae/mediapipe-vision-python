@@ -5,6 +5,10 @@ const TASKS_VISION_WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@
 // Gesture Recognizer: Hand Landmarker와 같은 손 랜드마크 + 엄지척 같은 기본 제스처 7종
 const HAND_MODEL = "../models/gesture_recognizer.task";
 const CLASSIFIER_URL = "model/gesture_classifier.json";  // serve.py가 joblib을 JSON으로 바꿔 줌
+// 브라우저가 바로 재생하지 못하는 동영상(휴대폰 HEVC 등)은 ffmpeg.wasm으로 브라우저 안에서 H.264로 변환
+// (래퍼는 vendor/ffmpeg에 두고, 약 30MB인 변환 엔진은 필요할 때만 받음)
+const FFMPEG_CORE = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm";
+const CONVERT_MAX_SIDE = 960;  // 변환할 때 긴 변을 이 크기 이하로 줄임 (인식에는 충분하고 변환이 빨라짐)
 const SAMPLE_VIDEO = "../samples/gestures_test.webm";  // 브라우저는 OpenCV 기본 mp4(mp4v)를 못 읽어서 WebM 사용
 
 // 제스처 이름(수집할 때 붙인 라벨, 대소문자 무시) -> 화면에 띄울 효과
@@ -40,6 +44,8 @@ let source = null;        // { kind: "camera" | "video" | "image", el, mirrored,
 let result = null;
 let predictions = [];     // 손마다 { hand, label, score, box }
 let lastTimestamp = 0;
+let openSeq = 0;          // 입력을 열 때마다 증가 (변환이 끝났을 때 그사이 다른 입력을 열었는지 확인)
+let ffmpegLoading = null;
 let runningMode = "VIDEO";
 let switchingMode = false;
 let minScore = 0.7;
@@ -192,6 +198,7 @@ function setStatus(text, isError = false) {
 
 // ---------------------------------------------------------------- 입력
 async function useCamera() {
+  openSeq++;
   stopSource();
   let stream;
   try {
@@ -209,7 +216,8 @@ async function useCamera() {
   setStatus("웹캠 인식 중");
 }
 
-function openUrl(url, isImage, name = url) {
+function openUrl(url, isImage, name = url, file = null) {
+  openSeq++;
   stopSource();
   if (isImage) {
     const img = new Image();
@@ -222,11 +230,17 @@ function openUrl(url, isImage, name = url) {
   } else {
     const video = makeVideo();
     video.loop = true;
-    video.onerror = () => {
+    const fail = () => {
+      if (source?.el !== video) return;  // 이미 다른 입력으로 바뀜
       stopSource();
-      setStatus(`동영상을 열 수 없습니다: ${name}
-브라우저가 지원하는 형식(H.264 mp4, WebM)인지 확인하세요.\n휴대폰으로 찍은 HEVC(H.265) 영상은 브라우저에 따라 열리지 않습니다.`, true);
+      if (file) {
+        convertAndOpen(file);  // 직접 고른 파일이면 브라우저 안에서 변환해서 다시 열기
+      } else {
+        setStatus(`동영상을 열 수 없습니다: ${name}\n브라우저가 지원하는 형식(H.264 mp4, WebM)인지 확인하세요.`, true);
+      }
     };
+    video.onerror = fail;
+    video.onloadedmetadata = () => { if (!video.videoWidth) fail(); };  // 소리만 읽히고 영상은 못 읽는 경우
     video.src = url;
     video.play().catch(() => {});
     setSource({ kind: "video", el: video, mirrored: false });
@@ -236,7 +250,60 @@ function openUrl(url, isImage, name = url) {
 
 function openFile(file) {
   if (!file) return;
-  openUrl(URL.createObjectURL(file), file.type.startsWith("image/"), file.name);
+  openUrl(URL.createObjectURL(file), file.type.startsWith("image/"), file.name, file);
+}
+
+function loadFFmpeg() {
+  ffmpegLoading ??= (async () => {
+    const { FFmpeg } = await import("./vendor/ffmpeg/index.js");
+    const ffmpeg = new FFmpeg();
+    await ffmpeg.load({
+      coreURL: `${FFMPEG_CORE}/ffmpeg-core.js`,
+      wasmURL: `${FFMPEG_CORE}/ffmpeg-core.wasm`,
+    });
+    return ffmpeg;
+  })().catch((e) => {
+    ffmpegLoading = null;  // 다음에 다시 시도할 수 있게
+    throw e;
+  });
+  return ffmpegLoading;
+}
+
+async function convertAndOpen(file) {
+  const seq = openSeq;
+  const name = file.name;
+  setStatus(`${name}: 이 브라우저가 바로 재생하지 못하는 형식이라 변환합니다.\n`
+            + "변환 도구를 받는 중... (처음 한 번, 약 30MB)");
+  try {
+    const ffmpeg = await loadFFmpeg();
+    const onProgress = ({ progress }) => {
+      if (seq !== openSeq) return;
+      const percent = Math.round(Math.min(Math.max(progress, 0), 1) * 100);
+      setStatus(`${name} 변환 중... ${percent}%\n(브라우저 안에서 변환하며 파일은 어디에도 올라가지 않습니다)`);
+    };
+    ffmpeg.on("progress", onProgress);
+    try {
+      await ffmpeg.writeFile("input", new Uint8Array(await file.arrayBuffer()));
+      const side = `min(1,${CONVERT_MAX_SIDE}/max(iw,ih))`;
+      const code = await ffmpeg.exec([
+        "-i", "input",
+        "-vf", `scale='trunc(iw*${side}/2)*2':'trunc(ih*${side}/2)*2'`,
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-pix_fmt", "yuv420p", "-an",
+        "output.mp4",
+      ]);
+      if (code !== 0) throw new Error(`ffmpeg 종료 코드 ${code}`);
+      const data = await ffmpeg.readFile("output.mp4");
+      if (seq !== openSeq) return;  // 변환하는 사이 다른 입력을 열었음
+      const converted = new Blob([data], { type: "video/mp4" });
+      openUrl(URL.createObjectURL(converted), false, `${name} (변환됨)`);
+    } finally {
+      ffmpeg.off("progress", onProgress);
+      await ffmpeg.deleteFile("input").catch(() => {});
+      await ffmpeg.deleteFile("output.mp4").catch(() => {});
+    }
+  } catch (e) {
+    if (seq === openSeq) setStatus(`동영상을 변환하지 못했습니다: ${name}\n${e.message}`, true);
+  }
 }
 
 function makeVideo() {
@@ -506,6 +573,7 @@ $("scoreRange").oninput = (e) => {
 window.gestureDemo = {
   get result() { return result; },
   get predictions() { return predictions; },
+  convert: (file) => convertAndOpen(file),
   features: (i = 0) => result && toFeatures(result.landmarks[i], result.handedness[i][0].categoryName,
                                              canvas.width, canvas.height),
 };
