@@ -5,3 +5,7 @@ venv/
 
 # 학습용 원본 영상 (얼굴이 나오므로 공개 저장소에 올리지 않음)
 custom_gesture/videos/
+
+# 개인 학습 데이터와 원본 분류기 (웹용 web/model/gesture_classifier.json만 올림)
+custom_gesture/data/
+custom_gesture/gesture_classifier.joblib

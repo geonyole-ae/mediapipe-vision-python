@@ -1,7 +1,9 @@
-# MediaPipe Vision (Python)
+# MediaPipe Vision
 
-[MediaPipe Tasks](https://developers.google.com/edge/mediapipe/solutions/guide) API로 만든 손 랜드마크, 손 제스처 인식, 얼굴 랜드마크 예제입니다.
-웹캠, 동영상, 이미지 파일을 입력으로 쓸 수 있습니다.
+[MediaPipe Tasks](https://developers.google.com/edge/mediapipe/solutions/guide) API로 만든 손 랜드마크, 손 제스처 인식, 얼굴 랜드마크 예제와
+**나만의 제스처를 학습해서 웹에서 효과를 띄우는 데모**입니다. 웹캠, 동영상, 이미지 파일을 입력으로 쓸 수 있습니다.
+
+🌐 **온라인 데모:** https://geonyole-ae.github.io/mediapipe-vision-python/ — nike → 나이키 로고, ok → 👌, 양손 엄지척 → 🎆 폭죽
 
 | 스크립트 | 기능 | 모델 |
 |---|---|---|
@@ -96,40 +98,50 @@ python custom_gesture/recognize.py --source test.mp4                # 인식
 
 ## 웹 버전: 제스처 이펙트
 
-학습한 분류기로 브라우저에서 제스처를 인식해 효과를 띄웁니다. `nike`를 인식하면 나이키 로고, `ok`를 인식하면 👌 이모지가 손 위에 나타납니다. **양손으로 엄지척**을 하면 폭죽이 터집니다 (기본 제스처라 학습이 필요 없음).
+학습한 분류기로 브라우저에서 제스처를 인식해 손 위에 효과를 띄웁니다.
+**온라인 데모:** https://geonyole-ae.github.io/mediapipe-vision-python/ (설치 없이 웹캠·동영상·사진으로 바로 사용)
+
+| 동작 | 효과 | 학습 |
+|---|---|---|
+| `nike` (검지 위 + 엄지 옆으로) | 나이키 로고 | 필요 (`custom_gesture`로 학습) |
+| `ok` (엄지·검지로 동그라미) | 👌 이모지 | 필요 |
+| 양손 엄지척 | 🎆 폭죽 | 불필요 (기본 제스처) |
+
+### 로컬에서 실행
 
 ```bash
 python web/serve.py        # http://localhost:8000/web/ 이 자동으로 열림, 종료는 Ctrl+C
 ```
 
-**온라인 데모 (GitHub Pages):** https://geonyole-ae.github.io/mediapipe-vision-python/
-올라가 있는 분류기는 휴대폰 영상 4개(nike 1, ok 1, none 2)로 학습했습니다 (기본 제스처 거르기 + nike 엄지 접기 합성). 영상마다 뒤 20%를 학습에서 빼고 확인한 프레임 단위 정확도는 약 96%입니다. 같은 방·조명에서만 찍었으므로 다른 환경에서는 정확도가 낮을 수 있습니다.
-`🎬 예제 영상`은 공개 예제 사진으로 만든 18초 영상입니다: 한 손 엄지척 → **양손 엄지척(폭죽)** → 브이 → 검지 위로 → 엄지 아래. 장면마다 아래 자막에 나와야 할 결과가 적혀 있고, nike·ok 동작은 들어 있지 않습니다.
+`📷 웹캠`, `📁 동영상/사진 열기`, `🎬 예제 영상` 중 하나를 고르면 됩니다.
 
-GitHub Pages에 올린 분류기를 바꾸려면, 학습한 뒤 JSON으로 내보내서 커밋·푸시합니다.
+- `🎬 예제 영상`은 공개 예제 사진으로 만든 18초 영상입니다: 한 손 엄지척 → **양손 엄지척(폭죽)** → 브이 → 검지 위로 → 엄지 아래. 장면마다 아래 자막에 나와야 할 결과가 적혀 있고, nike·ok 동작은 들어 있지 않습니다.
+- 손 인식은 브라우저 안에서 MediaPipe JS(`@mediapipe/tasks-vision` 1.1.0)로 합니다. `serve.py`는 `custom_gesture/gesture_classifier.joblib`이 있으면 그것을 JSON으로 바꿔서 넘겨 주고(다시 학습하면 새로고침만 하면 됨), 없으면 `web/model/gesture_classifier.json`을 씁니다.
+- 웹캠은 `localhost`나 `https` 주소에서만 켜집니다 (브라우저 보안 정책). 파일을 더블클릭해서 열면 동작하지 않습니다.
+- 브라우저가 바로 재생하지 못하는 동영상(휴대폰으로 찍은 HEVC/H.265 등)은 [ffmpeg.wasm](https://github.com/ffmpegwasm/ffmpeg.wasm)으로 **브라우저 안에서 H.264로 변환**한 뒤 엽니다. 처음 한 번 변환 엔진(약 30MB)을 받고, 20초 영상 기준 20초 정도 걸립니다. 파일은 서버로 올라가지 않습니다.
+
+### 효과 바꾸기
+
+- 학습한 제스처의 효과는 `web/app.js` 위쪽의 `EFFECTS`에서 고칩니다. 예: `heart: { emoji: "❤️", name: "하트" }`. 이미지는 `{ image: "assets/파일.png" }`처럼 씁니다.
+- 폭죽처럼 기본 제스처 조합으로 동작하는 효과는 `COMBO_EFFECTS`에 있습니다. `hands: 1`로 바꾸면 한 손 엄지척으로도 터지고, `gesture`를 `Victory`로 바꾸면 양손 브이로 바뀝니다.
+- `web/assets/nike.svg`는 스우시 모양을 단순하게 그린 것입니다. 나이키 로고는 Nike의 상표이므로 이 데모 밖에서 쓸 때는 주의하세요.
+
+### 올라가 있는 분류기
+
+휴대폰 영상 4개(nike 1, ok 1, none 2)로 학습했습니다 (기본 제스처 거르기 + nike 엄지 접기 합성). 영상마다 뒤 20%를 학습에서 빼고 확인한 프레임 단위 정확도는 약 96%이고, 웹캠으로도 동작을 확인했습니다. 한 사람의 손을 같은 방·조명에서만 찍었으므로, 다른 사람의 손이나 다른 환경에서는 정확도가 낮을 수 있습니다.
+
+학습 데이터(`custom_gesture/data/`)와 원본 분류기(`.joblib`)는 저장소에 올리지 않고, 웹용으로 내보낸 `web/model/gesture_classifier.json`만 올립니다. 분류기를 바꾸려면 학습한 뒤 내보내서 커밋·푸시합니다 (1~2분 뒤 GitHub Pages에 반영).
 
 ```bash
 python custom_gesture/train.py --fold-thumb nike   # 또는 app.py 학습 탭
-python web/serve.py --export      # custom_gesture/gesture_classifier.joblib -> web/model/gesture_classifier.json
+python web/serve.py --export                       # gesture_classifier.joblib -> web/model/gesture_classifier.json
 git add web/model/gesture_classifier.json && git commit -m "분류기 업데이트" && git push
 ```
-
-1. `custom_gesture/app.py`에서 `nike`, `ok`라는 이름으로 데이터를 모으고 학습합니다. 아무 제스처도 아닌 손을 `none`으로 같이 모으는 것을 권장합니다.
-2. `python web/serve.py`를 실행하면 페이지가 열립니다.
-3. `📷 웹캠`, `📁 동영상/사진 열기`, `🎬 예제 영상` 중 하나를 고릅니다.
-
-- 손 인식은 브라우저 안에서 MediaPipe JS(`@mediapipe/tasks-vision` 1.1.0)로 하고, 분류기는 `serve.py`가 joblib 파일을 JSON으로 바꿔서 넘겨 줍니다. 다시 학습한 뒤에는 페이지만 새로고침하면 됩니다.
-- 효과를 바꾸거나 추가하려면 `web/app.js` 위쪽의 `EFFECTS`를 고칩니다. 예: `heart: { emoji: "❤️", name: "하트" }`. 이미지는 `{ image: "assets/파일.png" }`처럼 씁니다.
-- 폭죽처럼 기본 제스처 조합으로 동작하는 효과는 `COMBO_EFFECTS`에 있습니다. 예를 들어 `hands: 1`로 바꾸면 한 손 엄지척으로도 터지고, `gesture`를 `Victory`로 바꾸면 양손 브이로 바뀝니다.
-- `web/assets/nike.svg`는 스우시 모양을 단순하게 그린 것입니다. 공식 로고 이미지를 쓰려면 같은 이름으로 덮어쓰거나 `EFFECTS`의 경로를 바꾸세요. 나이키 로고는 Nike의 상표이므로 저장소를 공개할 때는 주의하세요.
-- 브라우저가 바로 재생하지 못하는 동영상(휴대폰으로 찍은 HEVC/H.265 등)을 열면, [ffmpeg.wasm](https://github.com/ffmpegwasm/ffmpeg.wasm)으로 **브라우저 안에서 H.264로 변환**한 뒤 엽니다. 처음 한 번 변환 엔진(약 30MB)을 받고, 20초 영상 기준 20초 정도 걸립니다. 파일은 서버로 올라가지 않습니다. OpenCV로 만든 `gestures_test.mp4`도 브라우저에서 재생되지 않아서 예제 영상은 `gestures_test.webm`을 씁니다.
-- 웹캠은 `localhost`나 `https` 주소에서만 켜집니다 (브라우저 보안 정책). 파일을 더블클릭해서 열면 동작하지 않으니 로컬에서는 꼭 `serve.py`로 실행하세요.
-- `serve.py`는 `custom_gesture/gesture_classifier.joblib`이 있으면 그것을, 없으면 `web/model/gesture_classifier.json`을 씁니다.
 
 ## 참고 사항
 
 - **왼손/오른손:** 모델은 좌우 반전하지 않은 이미지를 기준으로 왼손/오른손을 판단합니다. 그래서 거울 모드로 표시하는 웹캠 입력에서만 라벨을 뒤집어 실제 손과 맞춥니다.
-- **실행 모드:** 모든 입력을 `VIDEO` 실행 모드로 처리하므로 프레임마다 증가하는 타임스탬프를 넣습니다.
+- **실행 모드:** 웹캠·동영상은 `VIDEO` 실행 모드로 처리하므로 프레임마다 증가하는 타임스탬프를 넣습니다. `custom_gesture`와 웹 데모는 서로 관계없는 사진을 매번 새로 검출하도록 사진에는 `IMAGE` 모드를 씁니다.
 - **웹캠이 없을 때:** `samples/gestures_test.mp4`(브라우저용은 `.webm`)는 예제 사진으로 만든 테스트 영상입니다. 한 손 엄지척, 양손 엄지척, 브이, 검지 위로, 엄지 아래 순서이고 장면마다 자막이 있습니다 (`python tools/make_test_video.py`로 다시 만들 수 있음).
 
 ## 폴더 구조
@@ -164,3 +176,5 @@ git add web/model/gesture_classifier.json && git commit -m "분류기 업데이�
 - [Face Landmarker](https://developers.google.com/edge/mediapipe/solutions/vision/face_landmarker): `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task`
 
 예제 이미지는 MediaPipe 공식 예제에서 쓰는 이미지입니다 (`storage.googleapis.com/mediapipe-tasks`, `mediapipe-assets`).
+
+웹 데모의 동영상 변환에는 [ffmpeg.wasm](https://github.com/ffmpegwasm/ffmpeg.wasm)(MIT, `web/vendor/ffmpeg/`)을 씁니다. 변환 엔진 `@ffmpeg/core`는 실행할 때 jsDelivr에서 받습니다.
