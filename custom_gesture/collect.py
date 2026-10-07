@@ -7,10 +7,9 @@
        python custom_gesture/collect.py --label heart --max 300             # 300개 모으면 자동 종료
 종료:  q 또는 ESC
 
-none이 아닌 라벨은 기본 제스처(엄지척 등)로 보이는 프레임을 저장하지 않습니다 (--keep-builtin으로 끔).
+none이 아닌 라벨은 기본 제스처(엄지척 등)로 보이는 프레임을 저장하지 않습니다 (common.py의 SKIP_BUILTIN).
 """
 import argparse
-from contextlib import nullcontext
 from pathlib import Path
 
 import cv2
@@ -33,25 +32,20 @@ def draw_status(frame, label, saved, recording, has_hand, is_camera, skipped=0):
         cv2.putText(frame, "no hand", (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
 
 
-def builtin_check(args, video):
-    return common.BuiltinGestureCheck(video) if args.skip_builtin else nullcontext()
-
-
 def collect_images(args, writer):
     saved = skipped = 0
-    with common.create_landmarker(num_hands=1, video=False) as landmarker,             builtin_check(args, video=False) as checker:
+    with common.HandDetector(num_hands=1, video=False) as detector:
         for path in common.list_images(args.source):
             frame = cv2.imread(str(path))
             if frame is None:
                 print(f"  읽기 실패: {path}")
                 continue
 
-            image = common.to_mp_image(frame)
-            result = landmarker.detect(image)
+            result = detector.detect(common.to_mp_image(frame))
             if not result.hand_landmarks:
                 print(f"  손 없음: {path.name}")
                 continue
-            builtin = checker.check(image) if checker else None
+            builtin = common.builtin_gesture(result, 0) if args.skip_builtin else None
             if builtin:
                 print(f"  건너뜀 ({builtin}로 보임): {path.name}")
                 skipped += 1
@@ -79,7 +73,7 @@ def collect_stream(args, writer):
     clock = common.VideoClock()
     saved = skipped = frame_idx = 0
 
-    with common.create_landmarker(num_hands=1) as landmarker, builtin_check(args, video=True) as checker:
+    with common.HandDetector(num_hands=1) as detector:
         while True:
             ok, frame = cap.read()
             if not ok:
@@ -90,11 +84,10 @@ def collect_stream(args, writer):
             if is_camera:
                 frame = cv2.flip(frame, 1)  # 거울 모드
 
-            image, ts = common.to_mp_image(frame), clock.now()
-            result = landmarker.detect_for_video(image, ts)
+            result = detector.detect(common.to_mp_image(frame), clock.now())
             has_hand = bool(result.hand_landmarks)
             # 새 제스처를 모을 때는 엄지척 같은 기본 제스처 프레임을 저장하지 않음
-            builtin = checker.check(image, ts) if checker and has_hand else None
+            builtin = common.builtin_gesture(result, 0) if args.skip_builtin and has_hand else None
             frame_idx += 1
 
             if recording and has_hand and builtin:
@@ -132,11 +125,9 @@ def main():
     parser.add_argument("--every", type=int, default=1,
                         help="N프레임마다 1개 저장 (웹캠/동영상, 비슷한 샘플이 너무 많을 때)")
     parser.add_argument("--no-show", action="store_true", help="화면 표시 없이 수집")
-    parser.add_argument("--keep-builtin", action="store_true",
-                        help="기본 제스처(엄지척 등)로 보이는 프레임도 저장")
     args = parser.parse_args()
     args.every = max(args.every, 1)
-    args.skip_builtin = not args.keep_builtin and common.skips_builtin(args.label)
+    args.skip_builtin = common.skips_builtin(args.label)
 
     f, writer = common.open_writer(args.data)
     with f:

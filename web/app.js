@@ -1,8 +1,9 @@
 // 제스처 이펙트 - 브라우저에서 손 랜드마크를 찾고, 학습한 분류기로 제스처를 인식해 효과를 띄움
-import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.0/vision_bundle.mjs";
+import { FilesetResolver, GestureRecognizer } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.0/vision_bundle.mjs";
 
 const TASKS_VISION_WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.0/wasm";
-const HAND_MODEL = "../models/hand_landmarker.task";
+// Gesture Recognizer: Hand Landmarker와 같은 손 랜드마크 + 엄지척 같은 기본 제스처 7종
+const HAND_MODEL = "../models/gesture_recognizer.task";
 const CLASSIFIER_URL = "model/gesture_classifier.json";  // serve.py가 joblib을 JSON으로 바꿔 줌
 const SAMPLE_VIDEO = "../samples/gestures_test.webm";  // 브라우저는 OpenCV 기본 mp4(mp4v)를 못 읽어서 WebM 사용
 
@@ -12,6 +13,11 @@ const EFFECTS = {
   nike: { image: "assets/nike.svg", name: "나이키 로고" },
   ok: { emoji: "👌", name: "OK 이모지" },
 };
+
+// 기본 제스처(Thumb_Up, Pointing_Up 등)로 보이는 손은 새 제스처가 아닌 것으로 처리
+// (custom_gesture/common.py의 SKIP_BUILTIN과 같게 맞출 것)
+const SKIP_BUILTIN = true;
+const BUILTIN_MIN_SCORE = 0.5;
 
 const SHOW_AFTER_MS = 150;  // 이만큼 연속으로 인식돼야 효과 표시 (깜빡임 방지)
 const HOLD_MS = 400;        // 인식이 잠깐 끊겨도 이만큼은 효과 유지
@@ -28,7 +34,7 @@ const $ = (id) => document.getElementById(id);
 const canvas = $("view");
 const ctx = canvas.getContext("2d");
 
-let landmarker = null;
+let detector = null;
 let classifier = null;
 let source = null;        // { kind: "camera" | "video" | "image", el, mirrored, stream, lastTime, detected }
 let result = null;
@@ -116,7 +122,7 @@ async function init() {
     FilesetResolver.forVisionTasks(TASKS_VISION_WASM),
     loadClassifier(),
   ]);
-  landmarker = await HandLandmarker.createFromOptions(fileset, {
+  detector = await GestureRecognizer.createFromOptions(fileset, {
     baseOptions: { modelAssetPath: HAND_MODEL, delegate: "CPU" },
     runningMode: "VIDEO",
     numHands: 2,
@@ -264,7 +270,7 @@ function stopSource() {
 // ---------------------------------------------------------------- 매 프레임
 function frame(now) {
   requestAnimationFrame(frame);
-  if (!source || !landmarker) return;
+  if (!source || !detector) return;
   const el = source.el;
   const w = el.videoWidth || el.naturalWidth;
   const h = el.videoHeight || el.naturalHeight;
@@ -279,7 +285,7 @@ function frame(now) {
   if (wantMode !== runningMode) {
     if (!switchingMode) {
       switchingMode = true;
-      landmarker.setOptions({ runningMode: wantMode }).then(() => {
+      detector.setOptions({ runningMode: wantMode }).then(() => {
         runningMode = wantMode;
         switchingMode = false;
       });
@@ -295,10 +301,10 @@ function frame(now) {
     source.lastTime = el.currentTime;
     source.detected = true;
     if (runningMode === "IMAGE") {
-      result = landmarker.detect(el);
+      result = detector.recognize(el);
     } else {
       lastTimestamp = Math.max(performance.now(), lastTimestamp + 1);  // VIDEO 모드는 증가하는 시각 필요
-      result = landmarker.detectForVideo(el, lastTimestamp);
+      result = detector.recognizeForVideo(el, lastTimestamp);
     }
     predictions = recognize(result, w, h);
   }
@@ -309,15 +315,29 @@ function frame(now) {
 function recognize(res, w, h) {
   return res.landmarks.map((landmarks, i) => {
     const hand = res.handedness[i][0].categoryName;
-    const pred = classifier
-      ? classifier.predict(toFeatures(landmarks, hand, w, h))
-      : { label: null, score: 0 };
+    const builtin = builtinGesture(res, i);
+    let pred = { label: null, score: 0 };
+    if (builtin) pred = { label: "none", score: 1 };  // 기본 제스처로 보이는 손은 분류기에 넣지 않음
+    else if (classifier) pred = classifier.predict(toFeatures(landmarks, hand, w, h));
     // 화면에 그릴 위치 (웹캠은 좌우 반전해서 보여 주므로 x도 뒤집음)
     const xs = landmarks.map((l) => (source.mirrored ? 1 - l.x : l.x));
     const ys = landmarks.map((l) => l.y);
     const box = { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
-    return { hand, ...pred, box };
+    return { hand, ...pred, builtin, box };
   });
+}
+
+function builtinGesture(res, i) {
+  const top = res.gestures?.[i]?.[0];
+  if (SKIP_BUILTIN && top && top.categoryName !== "None" && top.score >= BUILTIN_MIN_SCORE) {
+    return top.categoryName;
+  }
+  return null;
+}
+
+function predictionText(p) {
+  if (p.builtin) return `(${p.builtin})`;
+  return p.label && p.score >= minScore ? `${p.label} ${p.score.toFixed(2)}` : "-";
 }
 
 function draw(now, w, h) {
@@ -338,9 +358,7 @@ function draw(now, w, h) {
 
   const shown = [];
   for (const p of predictions) {
-    const passed = p.label && p.score >= minScore;
-    drawText(passed ? `${p.label} ${p.score.toFixed(2)}` : "-",
-             p.box.x0 * w, p.box.y0 * h - unit * 3, unit * 5, "#ff4dff");
+    drawText(predictionText(p), p.box.x0 * w, p.box.y0 * h - unit * 3, unit * 5, "#ff4dff");
   }
   for (const key of Object.keys(EFFECTS)) {
     if (updateEffect(key, now)) {
@@ -464,8 +482,7 @@ function updatePanel(shown) {
     }
   }
   const lines = predictions.map((p) => {
-    const text = p.label && p.score >= minScore ? `${p.label} ${p.score.toFixed(2)}` : "-";
-    return `${HAND_KO[p.hand] || p.hand}: ${text}`;
+    return `${HAND_KO[p.hand] || p.hand}: ${predictionText(p)}`;
   });
   $("resultText").textContent = source ? (lines.join("\n") || "손이 보이지 않습니다") : "-";
 }
@@ -476,9 +493,8 @@ $("fileBtn").onclick = () => $("fileInput").click();
 $("fileInput").onchange = (e) => { openFile(e.target.files[0]); e.target.value = ""; };
 $("sampleBtn").onclick = () => {
   openUrl(SAMPLE_VIDEO, false, "예제 영상");
-  setStatus("예제 영상은 엄지척·브이·검지 위로·엄지 아래 사진으로 만든 영상이라 nike·ok 동작이 없습니다.
-"
-            + "효과가 뜨지 않는 것이 정상입니다 (학습하지 않은 손 모양을 어떻게 처리하는지 보는 용도).");
+  setStatus("예제 영상은 엄지척·브이·검지 위로·엄지 아래 사진으로 만든 영상이라 nike·ok 동작이 없습니다.\n"
+            + "효과가 뜨지 않고 (Thumb_Up)처럼 기본 제스처 이름이 나오는 것이 정상입니다.");
 };
 $("stopBtn").onclick = () => { stopSource(); setStatus("정지했습니다."); };
 $("scoreRange").oninput = (e) => {

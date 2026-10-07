@@ -8,7 +8,7 @@
 | `hand_webcam.py` | 손 랜드마크 21점, 왼손/오른손 구분 | `models/hand_landmarker.task` |
 | `gesture_webcam.py` | 손 제스처 인식 (7종) + 손 랜드마크 | `models/gesture_recognizer.task` |
 | `face_webcam.py` | 얼굴 랜드마크 478점 + 표정 점수(blendshape) 52종 | `models/face_landmarker.task` |
-| `custom_gesture/app.py` | 내가 정한 제스처를 수집·학습·인식하는 GUI ([아래 설명](#나만의-제스처-학습)) | `models/hand_landmarker.task` + 직접 학습한 분류기 |
+| `custom_gesture/app.py` | 내가 정한 제스처를 수집·학습·인식하는 GUI ([아래 설명](#나만의-제스처-학습)) | `models/gesture_recognizer.task` + 직접 학습한 분류기 |
 | `web/serve.py` | 학습한 제스처에 맞춰 로고/이모지를 띄우는 웹 페이지 ([아래 설명](#웹-버전-제스처-이펙트)) | 위와 같음 (브라우저에서 실행) |
 
 ## 설치
@@ -56,7 +56,7 @@ python custom_gesture/app.py
 
 ![커스텀 제스처 학습 도구](samples/custom_gesture_app.png)
 
-Hand Landmarker로 얻은 손 랜드마크 21점을 특징으로 바꾸고, 이 특징으로 작은 신경망(scikit-learn MLP)을 학습합니다.
+Gesture Recognizer로 얻은 손 랜드마크 21점을 특징으로 바꾸고, 이 특징으로 작은 신경망(scikit-learn MLP)을 학습합니다. (Gesture Recognizer의 랜드마크는 Hand Landmarker와 똑같고, 기본 제스처 7종도 함께 알려 줍니다.)
 손 사진이 아니라 좌표만 저장하므로 데이터가 작고 학습은 몇 초면 끝납니다.
 
 ### 사용 순서
@@ -74,7 +74,8 @@ Hand Landmarker로 얻은 손 랜드마크 21점을 특징으로 바꾸고, 이 
 
 - 제스처당 **200~500개**를 권장합니다. 손 각도, 거리, 위치, 조명을 바꿔 가며 모아야 실제 인식이 잘 됩니다.
 - 아무 제스처도 아닌 손 모양을 `none`으로 모아 두면, 평범한 손을 다른 제스처로 잘못 인식하는 일이 줄어듭니다.
-- 새 제스처를 찍다 보면 손 모양을 바꾸는 사이에 엄지척 같은 다른 동작이 섞입니다. 그래서 `none`이 아닌 제스처를 모을 때는 MediaPipe 기본 인식기가 알아보는 제스처(엄지척, 검지 위로, 브이 등)로 보이는 프레임을 저장하지 않습니다. 새 제스처가 기본 제스처와 같은 모양이라면 수집 탭의 체크를 끄세요 (명령줄은 `--keep-builtin`).
+- **기본 제스처 거르기:** 새 제스처를 찍다 보면 손 모양을 바꾸는 사이에 엄지척 같은 다른 동작이 섞입니다. 그래서 `none`이 아닌 제스처를 모을 때는 기본 인식기가 알아보는 제스처(엄지척, 검지 위로, 브이 등)로 보이는 프레임을 저장하지 않고, 인식할 때도 기본 제스처로 보이는 손은 새 제스처로 판단하지 않습니다 (화면에 `(Thumb_Up)`처럼 표시). 새 제스처가 기본 제스처와 같은 모양이라면 `common.py`의 `SKIP_BUILTIN`과 `web/app.js`의 `SKIP_BUILTIN`을 `false`로 바꾸세요.
+- **엄지 접기 합성:** nike처럼 엄지를 펴는 제스처가 엄지만 다른 손 모양(검지 위로 등)과 헷갈리면, 학습 탭에서 `엄지만 접은 손을 none으로 합성할 제스처`로 그 제스처를 고르세요 (명령줄은 `train.py --fold-thumb nike`). 그 제스처 샘플마다 엄지만 접은 손을 만들어 none으로 학습합니다.
 - 왼손은 좌우를 뒤집어 오른손 모양으로 맞춰 저장합니다. 그래서 한 손으로만 모아도 양손 모두 인식됩니다 (`common.py`의 `MIRROR_LEFT_HAND`).
 
 데이터는 `custom_gesture/data/gestures.csv`, 학습한 분류기는 `custom_gesture/gesture_classifier.joblib`에 저장됩니다.
@@ -85,7 +86,7 @@ Hand Landmarker로 얻은 손 랜드마크 21점을 특징으로 바꾸고, 이 
 
 ```bash
 python custom_gesture/collect.py --label heart --source heart.mp4   # 수집 (웹캠은 SPACE로 녹화)
-python custom_gesture/train.py                                      # 학습
+python custom_gesture/train.py --fold-thumb nike                    # 학습 (엄지 접기 합성은 선택)
 python custom_gesture/recognize.py --source test.mp4                # 인식
 ```
 
@@ -102,12 +103,13 @@ python web/serve.py        # http://localhost:8000/web/ 이 자동으로 열림,
 ```
 
 **온라인 데모 (GitHub Pages):** https://geonyole-ae.github.io/mediapipe-vision-python/
-올라가 있는 분류기는 휴대폰 영상 4개(nike 1, ok 1, none 2)로 학습했습니다. 영상마다 뒤 20%를 학습에서 빼고 확인한 정확도는 약 97%입니다 (nike 98%, ok 97%, none 97%). 같은 방·조명에서만 찍었으므로 다른 환경에서는 정확도가 낮을 수 있고, 검지를 위로 든 손은 아직 nike로 잘못 인식합니다.
+올라가 있는 분류기는 휴대폰 영상 4개(nike 1, ok 1, none 2)로 학습했습니다 (기본 제스처 거르기 + nike 엄지 접기 합성). 영상마다 뒤 20%를 학습에서 빼고 확인한 프레임 단위 정확도는 약 96%이고, 예제 영상의 엄지척·브이·검지 위로·엄지 아래는 모두 기본 제스처로 처리됩니다. 같은 방·조명에서만 찍었으므로 다른 환경에서는 정확도가 낮을 수 있습니다.
 `🎬 예제 영상`에는 nike·ok 동작이 없으므로 효과가 뜨지 않는 것이 정상입니다.
 
 GitHub Pages에 올린 분류기를 바꾸려면, 학습한 뒤 JSON으로 내보내서 커밋·푸시합니다.
 
 ```bash
+python custom_gesture/train.py --fold-thumb nike   # 또는 app.py 학습 탭
 python web/serve.py --export      # custom_gesture/gesture_classifier.joblib -> web/model/gesture_classifier.json
 git add web/model/gesture_classifier.json && git commit -m "분류기 업데이트" && git push
 ```

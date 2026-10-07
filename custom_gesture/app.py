@@ -23,6 +23,7 @@ SLIDE_MS = 1500     # 인식 탭에서 사진 한 장을 보여주는 시간
 RECOGNIZE_HANDS = 2
 FONT = "Malgun Gothic"
 HAND_KO = {"Left": "왼손", "Right": "오른손"}
+NO_FOLD = "(사용 안 함)"
 MEDIA_TYPES = [("동영상/사진", "*.mp4 *.avi *.mov *.mkv *.wmv *.jpg *.jpeg *.png *.bmp *.webp"),
                ("모든 파일", "*.*")]
 
@@ -72,8 +73,7 @@ class App:
         # 실행 중인 입력 처리 상태
         self.mode = None          # "collect" | "recognize" | None
         self.source = None
-        self.landmarker = None
-        self.builtin = None       # 수집할 때 기본 제스처(엄지척 등) 프레임을 거르는 인식기
+        self.detector = None
         self.classifier = None
         self.clock = None
         self.job = None           # root.after 예약 id
@@ -162,12 +162,11 @@ class App:
         ttk.Spinbox(tab, from_=1, to=30, width=8, textvariable=self.every_var).grid(
             row=2, column=1, sticky="w", pady=3)
 
-        self.skip_builtin_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(tab, variable=self.skip_builtin_var,
-                        text="엄지척 같은 기본 제스처로 보이는 프레임은 저장 안 함").grid(
-            row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        ttk.Label(tab, text="('none'은 이런 손 모양도 필요하므로 거르지 않음)", foreground="gray").grid(
-            row=4, column=0, columnspan=2, sticky="w")
+        if common.SKIP_BUILTIN:
+            ttk.Label(tab, foreground="gray", wraplength=410, justify="left", text=(
+                "엄지척 같은 기본 제스처로 보이는 프레임은 저장하지 않습니다 ('none'은 저장). "
+                "인식할 때도 기본 제스처로 보이면 새 제스처로 판단하지 않습니다.")).grid(
+                row=3, column=0, columnspan=2, rowspan=2, sticky="w", pady=(6, 0))
 
         buttons = ttk.Frame(tab)
         buttons.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(10, 4))
@@ -208,14 +207,24 @@ class App:
     def build_train_tab(self):
         tab = ttk.Frame(self.tabs, padding=10)
         tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(2, weight=1)
+        tab.rowconfigure(4, weight=1)
+        option = ttk.Frame(tab)
+        option.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        ttk.Label(option, text="엄지만 접은 손을 none으로 합성할 제스처").pack(side="left")
+        self.fold_thumb_var = tk.StringVar(value=NO_FOLD)
+        self.fold_thumb_combo = ttk.Combobox(option, textvariable=self.fold_thumb_var, width=12,
+                                             state="readonly")
+        self.fold_thumb_combo.pack(side="left", padx=6)
+        ttk.Label(tab, foreground="gray", wraplength=410, justify="left", text=(
+            "nike처럼 엄지를 펴는 제스처를, 엄지만 다른 손 모양(검지 위로 등)과 헷갈릴 때 씁니다.")).grid(
+            row=1, column=0, sticky="w")
         self.train_btn = ttk.Button(tab, text="학습 시작", style="Big.TButton",
                                     command=self.start_training)
-        self.train_btn.grid(row=0, column=0, sticky="ew")
+        self.train_btn.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         self.progress = ttk.Progressbar(tab, mode="indeterminate")
-        self.progress.grid(row=1, column=0, sticky="ew", pady=6)
-        self.train_log = ScrolledText(tab, width=56, height=26, font=("Consolas", 9), wrap="none")
-        self.train_log.grid(row=2, column=0, sticky="nsew")
+        self.progress.grid(row=3, column=0, sticky="ew", pady=6)
+        self.train_log = ScrolledText(tab, width=56, height=22, font=("Consolas", 9), wrap="none")
+        self.train_log.grid(row=4, column=0, sticky="nsew")
         self.write_log("수집한 데이터로 분류기를 학습합니다.\n"
                        "20%를 떼어 검증한 뒤, 전체 데이터로 다시 학습해서 저장합니다.\n"
                        f"\n데이터: {self.data_path}\n저장 위치: {self.model_path}\n")
@@ -284,16 +293,11 @@ class App:
         try:
             if mode == "recognize":
                 self.classifier = common.GestureClassifier(self.model_path)  # 재학습 결과 반영
-            self.landmarker = common.create_landmarker(
+            self.detector = common.HandDetector(
                 num_hands=1 if mode == "collect" else RECOGNIZE_HANDS,
                 video=not source.is_images)
-            if mode == "collect":
-                self.builtin = common.BuiltinGestureCheck(video=not source.is_images)
         except Exception as e:
             source.close()
-            if self.landmarker is not None:
-                self.landmarker.close()
-                self.landmarker = None
             messagebox.showerror("오류", str(e))
             return False
 
@@ -320,12 +324,9 @@ class App:
         if self.source is not None:
             self.source.close()
             self.source = None
-        if self.landmarker is not None:
-            self.landmarker.close()
-            self.landmarker = None
-        if self.builtin is not None:
-            self.builtin.close()
-            self.builtin = None
+        if self.detector is not None:
+            self.detector.close()
+            self.detector = None
         self.mode = None
         self.update_controls()
 
@@ -387,7 +388,7 @@ class App:
             text += f" (기본 제스처로 보여서 건너뜀 {self.skipped}개)"
         return text
 
-    def process_collect(self, frame, image, ts, result, hands, texts):
+    def process_collect(self, frame, result, hands, texts):
         has_hand = bool(result.hand_landmarks)
         if has_hand:
             hands.append(result.hand_landmarks[0])
@@ -401,8 +402,8 @@ class App:
 
         if self.rec_state == "on":
             builtin = None
-            if has_hand and self.skip_builtin_var.get() and common.skips_builtin(self.rec_label):
-                builtin = self.builtin.check(image, ts)
+            if has_hand and common.skips_builtin(self.rec_label):
+                builtin = common.builtin_gesture(result, 0)
             if builtin:
                 self.skipped += 1
                 texts.append((0.02, 0.21, f"건너뜀: {builtin}", "#ffa500", 13, "w"))
@@ -448,6 +449,10 @@ class App:
         for label, n in sorted(counts.items()):
             self.count_tree.insert("", "end", text=label, values=(n,))
         self.label_combo["values"] = sorted(counts)
+        fold_choices = [NO_FOLD] + [l for l in sorted(counts) if l.lower() != common.NONE_LABEL]
+        self.fold_thumb_combo["values"] = fold_choices
+        if self.fold_thumb_var.get() not in fold_choices:
+            self.fold_thumb_var.set(NO_FOLD)
         self.total_var.set(f"합계 {sum(counts.values())}개")
 
     # ------------------------------------------------------------------ 학습
@@ -467,8 +472,10 @@ class App:
 
     def train_worker(self):
         try:
+            fold = self.fold_thumb_var.get()
             labels = train.train_and_save(self.data_path, self.model_path,
-                                          log=lambda s: self.train_queue.put(("log", s)))
+                                          log=lambda s: self.train_queue.put(("log", s)),
+                                          fold_thumb_from=None if fold == NO_FOLD else fold)
             self.train_queue.put(("done", f"학습 완료 - 제스처 {len(labels)}개: {', '.join(labels)}"))
         except Exception as e:
             self.train_queue.put(("error", str(e)))
@@ -516,8 +523,11 @@ class App:
         lines = []
         for i, (landmarks, handedness) in enumerate(zip(result.hand_landmarks, result.handedness)):
             hands.append(landmarks)
-            label, score = self.classifier.predict(common.hand_features(result, i, frame))
-            text = f"{label} {score:.2f}" if score >= self.min_score.get() else "-"
+            label, score, builtin = common.classify_hand(self.classifier, result, i, frame)
+            if builtin:  # 기본 제스처로 보이는 손은 새 제스처가 아님
+                text = f"({builtin})"
+            else:
+                text = f"{label} {score:.2f}" if score >= self.min_score.get() else "-"
 
             # 거울 모드(좌우 반전)로 넣은 프레임에서는 라벨을 뒤집어야 실제 손과 일치함
             hand = handedness[0].category_name
@@ -547,18 +557,13 @@ class App:
                 self.finish("입력이 끝났습니다.")
             return
 
-        image = common.to_mp_image(frame)
-        ts = 0
-        if self.source.is_images:
-            result = self.landmarker.detect(image)
-        else:
-            ts = self.clock.now()
-            result = self.landmarker.detect_for_video(image, ts)
+        ts = 0 if self.source.is_images else self.clock.now()
+        result = self.detector.detect(common.to_mp_image(frame), ts)
         self.frame_idx += 1
 
         hands, texts = [], []
         if self.mode == "collect":
-            self.process_collect(frame, image, ts, result, hands, texts)
+            self.process_collect(frame, result, hands, texts)
         else:
             self.process_recognize(frame, result, hands, texts)
         self.show(frame, hands, texts)

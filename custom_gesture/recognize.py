@@ -23,13 +23,19 @@ def recognize(frame, result, classifier):
     """손마다 (라벨, 확률). 확률이 낮으면 라벨은 None"""
     predictions = []
     for i in range(len(result.hand_landmarks)):
-        label, score = classifier.predict(common.hand_features(result, i, frame))
-        predictions.append((label if score >= MIN_SCORE else None, score))
+        label, score, builtin = common.classify_hand(classifier, result, i, frame)
+        predictions.append((label if score >= MIN_SCORE else None, score, builtin))
     return predictions
 
 
+def prediction_text(label, score, builtin):
+    if builtin:  # 기본 제스처로 보이는 손은 새 제스처가 아님
+        return f"({builtin})"
+    return f"{label} {score:.2f}" if label else "-"
+
+
 def draw_result(frame, result, predictions, mirrored):
-    for landmarks, handedness, (label, score) in zip(
+    for landmarks, handedness, prediction in zip(
             result.hand_landmarks, result.handedness, predictions):
         points = common.draw_hand(frame, landmarks)
 
@@ -37,7 +43,7 @@ def draw_result(frame, result, predictions, mirrored):
         hand = handedness[0].category_name
         if mirrored:
             hand = {"Left": "Right", "Right": "Left"}.get(hand, hand)
-        gesture = f"{label} {score:.2f}" if label else "-"
+        gesture = prediction_text(*prediction)
 
         x_min = min(p[0] for p in points)
         y_min = min(p[1] for p in points)
@@ -48,17 +54,17 @@ def draw_result(frame, result, predictions, mirrored):
 
 
 def run_images(source, classifier):
-    with common.create_landmarker(NUM_HANDS, video=False) as landmarker:
+    with common.HandDetector(NUM_HANDS, video=False) as detector:
         for path in common.list_images(source):
             frame = cv2.imread(str(path))
             if frame is None:
                 print(f"이미지를 읽을 수 없습니다: {path}")
                 continue
 
-            result = landmarker.detect(common.to_mp_image(frame))
+            result = detector.detect(common.to_mp_image(frame))
             predictions = recognize(frame, result, classifier)
             draw_result(frame, result, predictions, mirrored=False)
-            print(f"{path.name}: " + (", ".join(f"{l or '-'} {s:.2f}" for l, s in predictions)
+            print(f"{path.name}: " + (", ".join(prediction_text(*p) for p in predictions)
                                       or "손 없음"))
             cv2.imshow(WINDOW, frame)
             if cv2.waitKey(0) & 0xFF in (ord("q"), 27):
@@ -72,7 +78,7 @@ def run_stream(source, classifier):
     delay = 1 if is_camera else max(int(1000 / (cap.get(cv2.CAP_PROP_FPS) or 30)), 1)
     clock = common.VideoClock()
 
-    with common.create_landmarker(NUM_HANDS) as landmarker:
+    with common.HandDetector(NUM_HANDS) as detector:
         while True:
             ok, frame = cap.read()
             if not ok:
@@ -83,7 +89,7 @@ def run_stream(source, classifier):
             if is_camera:
                 frame = cv2.flip(frame, 1)  # 거울 모드
 
-            result = landmarker.detect_for_video(common.to_mp_image(frame), clock.now())
+            result = detector.detect(common.to_mp_image(frame), clock.now())
             draw_result(frame, result, recognize(frame, result, classifier), mirrored=is_camera)
             cv2.putText(frame, f"hands {len(result.hand_landmarks)}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
