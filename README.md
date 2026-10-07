@@ -96,7 +96,7 @@ python custom_gesture/recognize.py --source test.mp4                # 인식
 
 ## 웹 버전: 제스처 이펙트
 
-학습한 분류기로 브라우저에서 제스처를 인식해 효과를 띄웁니다. `nike`를 인식하면 나이키 로고, `ok`를 인식하면 👌 이모지가 손 위에 나타납니다.
+학습한 분류기로 브라우저에서 제스처를 인식해 효과를 띄웁니다. `nike`를 인식하면 나이키 로고, `ok`를 인식하면 👌 이모지가 손 위에 나타납니다. **양손으로 엄지척**을 하면 폭죽이 터집니다 (기본 제스처라 학습이 필요 없음).
 
 ```bash
 python web/serve.py        # http://localhost:8000/web/ 이 자동으로 열림, 종료는 Ctrl+C
@@ -120,6 +120,7 @@ git add web/model/gesture_classifier.json && git commit -m "분류기 업데이�
 
 - 손 인식은 브라우저 안에서 MediaPipe JS(`@mediapipe/tasks-vision` 1.1.0)로 하고, 분류기는 `serve.py`가 joblib 파일을 JSON으로 바꿔서 넘겨 줍니다. 다시 학습한 뒤에는 페이지만 새로고침하면 됩니다.
 - 효과를 바꾸거나 추가하려면 `web/app.js` 위쪽의 `EFFECTS`를 고칩니다. 예: `heart: { emoji: "❤️", name: "하트" }`. 이미지는 `{ image: "assets/파일.png" }`처럼 씁니다.
+- 폭죽처럼 기본 제스처 조합으로 동작하는 효과는 `COMBO_EFFECTS`에 있습니다. 예를 들어 `hands: 1`로 바꾸면 한 손 엄지척으로도 터지고, `gesture`를 `Victory`로 바꾸면 양손 브이로 바뀝니다.
 - `web/assets/nike.svg`는 스우시 모양을 단순하게 그린 것입니다. 공식 로고 이미지를 쓰려면 같은 이름으로 덮어쓰거나 `EFFECTS`의 경로를 바꾸세요. 나이키 로고는 Nike의 상표이므로 저장소를 공개할 때는 주의하세요.
 - 브라우저가 바로 재생하지 못하는 동영상(휴대폰으로 찍은 HEVC/H.265 등)을 열면, [ffmpeg.wasm](https://github.com/ffmpegwasm/ffmpeg.wasm)으로 **브라우저 안에서 H.264로 변환**한 뒤 엽니다. 처음 한 번 변환 엔진(약 30MB)을 받고, 20초 영상 기준 20초 정도 걸립니다. 파일은 서버로 올라가지 않습니다. OpenCV로 만든 `gestures_test.mp4`도 브라우저에서 재생되지 않아서 예제 영상은 `gestures_test.webm`을 씁니다.
 - 웹캠은 `localhost`나 `https` 주소에서만 켜집니다 (브라우저 보안 정책). 파일을 더블클릭해서 열면 동작하지 않으니 로컬에서는 꼭 `serve.py`로 실행하세요.

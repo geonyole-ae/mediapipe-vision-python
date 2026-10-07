@@ -23,6 +23,13 @@ const EFFECTS = {
 const SKIP_BUILTIN = true;
 const BUILTIN_MIN_SCORE = 0.5;
 
+// 기본 제스처 조합 효과 (학습 없이 동작): 여러 손이 같은 기본 제스처를 하면 발동
+const COMBO_EFFECTS = {
+  fireworks: { gesture: "Thumb_Up", hands: 2, emoji: "🎆", name: "폭죽", label: "양손 엄지척" },
+};
+const FIREWORK_BURST_MS = 450;  // 양손 엄지척을 유지하는 동안 이 간격으로 폭죽이 터짐
+
+const NUM_HANDS = 2;
 const SHOW_AFTER_MS = 150;  // 이만큼 연속으로 인식돼야 효과 표시 (깜빡임 방지)
 const HOLD_MS = 400;        // 인식이 잠깐 끊겨도 이만큼은 효과 유지
 const POP_MS = 350;         // 효과가 튀어나오는 애니메이션 시간
@@ -46,6 +53,8 @@ let predictions = [];     // 손마다 { hand, label, score, box }
 let lastTimestamp = 0;
 let openSeq = 0;          // 입력을 열 때마다 증가 (변환이 끝났을 때 그사이 다른 입력을 열었는지 확인)
 let ffmpegLoading = null;
+let lastFrameTime = 0;
+const particles = [];     // 폭죽 불꽃
 let runningMode = "VIDEO";
 let switchingMode = false;
 let minScore = 0.7;
@@ -131,7 +140,7 @@ async function init() {
   detector = await GestureRecognizer.createFromOptions(fileset, {
     baseOptions: { modelAssetPath: HAND_MODEL, delegate: "CPU" },
     runningMode: "VIDEO",
-    numHands: 2,
+    numHands: NUM_HANDS,
     minHandDetectionConfidence: 0.5,
     minHandPresenceConfidence: 0.5,
     minTrackingConfidence: 0.5,
@@ -174,6 +183,16 @@ function renderLegend() {
       miss.textContent = "학습 안 됨";
       li.append(miss);
     }
+    $("legend").append(li);
+  }
+  for (const combo of Object.values(COMBO_EFFECTS)) {
+    const li = document.createElement("li");
+    const icon = document.createElement("span");
+    icon.className = "icon";
+    icon.append(effectNode(combo));
+    const text = document.createElement("span");
+    text.textContent = `${combo.label} → ${combo.name} (학습 불필요)`;
+    li.append(icon, text);
     $("legend").append(li);
   }
   $("modelLabels").textContent = classifier
@@ -330,6 +349,7 @@ function stopSource() {
   source = null;
   result = null;
   predictions = [];
+  particles.length = 0;
   updatePanel([]);
   $("placeholder").classList.remove("hidden");
 }
@@ -352,7 +372,8 @@ function frame(now) {
   if (wantMode !== runningMode) {
     if (!switchingMode) {
       switchingMode = true;
-      detector.setOptions({ runningMode: wantMode }).then(() => {
+      // 옵션을 다시 줄 때 손 개수도 같이 넘김 (빠뜨리면 기본값 1로 돌아가는 경우가 있음)
+      detector.setOptions({ runningMode: wantMode, numHands: NUM_HANDS }).then(() => {
         runningMode = wantMode;
         switchingMode = false;
       });
@@ -382,7 +403,8 @@ function frame(now) {
 function recognize(res, w, h) {
   return res.landmarks.map((landmarks, i) => {
     const hand = res.handedness[i][0].categoryName;
-    const builtin = builtinGesture(res, i);
+    const gesture = topGesture(res, i);          // 기본 제스처 (조합 효과용)
+    const builtin = SKIP_BUILTIN ? gesture : null;
     let pred = { label: null, score: 0 };
     if (builtin) pred = { label: "none", score: 1 };  // 기본 제스처로 보이는 손은 분류기에 넣지 않음
     else if (classifier) pred = classifier.predict(toFeatures(landmarks, hand, w, h));
@@ -390,13 +412,13 @@ function recognize(res, w, h) {
     const xs = landmarks.map((l) => (source.mirrored ? 1 - l.x : l.x));
     const ys = landmarks.map((l) => l.y);
     const box = { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
-    return { hand, ...pred, builtin, box };
+    return { hand, ...pred, builtin, gesture, box };
   });
 }
 
-function builtinGesture(res, i) {
+function topGesture(res, i) {
   const top = res.gestures?.[i]?.[0];
-  if (SKIP_BUILTIN && top && top.categoryName !== "None" && top.score >= BUILTIN_MIN_SCORE) {
+  if (top && top.categoryName !== "None" && top.score >= BUILTIN_MIN_SCORE) {
     return top.categoryName;
   }
   return null;
@@ -433,7 +455,90 @@ function draw(now, w, h) {
       shown.push(key);
     }
   }
+
+  const dt = lastFrameTime ? Math.min((now - lastFrameTime) / 1000, 0.05) : 0;
+  lastFrameTime = now;
+  if (updateCombo("fireworks", now)) {
+    const st = effectState.fireworks;
+    if (now - st.lastBurst > FIREWORK_BURST_MS) {
+      const first = st.lastBurst < st.shownAt;  // 처음 터질 때는 한 번에 여러 개
+      for (let k = 0; k < (first ? 3 : 1); k++) launchFirework(w, h);
+      st.lastBurst = now;
+    }
+    shown.push("fireworks");
+  }
+  drawParticles(dt, w, h);
   updatePanel(shown);
+}
+
+// ---------------------------------------------------------------- 폭죽
+function updateCombo(key, now) {
+  const combo = COMBO_EFFECTS[key];
+  const st = (effectState[key] ??= { since: null, lastSeen: 0, shownAt: null, lastBurst: 0 });
+  const hands = predictions.filter((p) => p.gesture === combo.gesture).length;
+  if (hands >= combo.hands) {
+    st.since ??= now;
+    st.lastSeen = now;
+  } else if (now - st.lastSeen > HOLD_MS) {
+    st.since = null;
+    st.shownAt = null;
+  }
+  const visible = st.since !== null && now - st.since >= SHOW_AFTER_MS;
+  if (visible && st.shownAt === null) st.shownAt = now;
+  return visible;
+}
+
+function launchFirework(w, h) {
+  const size = Math.min(w, h);
+  const cx = w * (0.15 + Math.random() * 0.7);
+  const cy = h * (0.12 + Math.random() * 0.35);
+  const hue = Math.random() * 360;
+  const count = 70 + Math.floor(Math.random() * 40);
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2 + Math.random() * 0.2;
+    const speed = size * (0.25 + Math.random() * 0.35);
+    const life = 0.9 + Math.random() * 0.7;
+    particles.push({
+      x: cx, y: cy,
+      vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+      life, maxLife: life,
+      hue: (hue + Math.random() * 40 - 20 + 360) % 360,
+      width: size * 0.006,
+    });
+  }
+}
+
+function drawParticles(dt, w, h) {
+  if (particles.length === 0) return;
+  const gravity = Math.min(w, h) * 0.35;  // px/s²
+  ctx.save();
+  ctx.lineCap = "round";
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.vx *= 1 - 1.6 * dt;                    // 공기 저항
+    p.vy = p.vy * (1 - 1.6 * dt) + gravity * dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.life -= dt;
+    if (p.life <= 0) {
+      particles.splice(i, 1);
+      continue;
+    }
+    const alpha = p.life / p.maxLife;
+    if (alpha < 0.3 && Math.random() < 0.4) continue;  // 꺼져 갈 때 반짝임
+    const width = Math.max(p.width * (0.6 + alpha), 2);
+    const tailX = p.x - p.vx * 0.05, tailY = p.y - p.vy * 0.05;  // 움직이는 방향으로 꼬리
+    // 밝은 배경에서도 보이도록 진한 색의 넓은 번짐 + 밝은 심지를 겹쳐 그림
+    for (const [scale, light, a] of [[3, 50, 0.25], [1, 62, 1]]) {
+      ctx.strokeStyle = `hsla(${p.hue}, 100%, ${light}%, ${alpha * a})`;
+      ctx.lineWidth = width * scale;
+      ctx.beginPath();
+      ctx.moveTo(tailX, tailY);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
 }
 
 function drawHand(landmarks, w, h, unit) {
@@ -543,7 +648,7 @@ function updatePanel(shown) {
       for (const k of shown) {
         const span = document.createElement("span");
         span.className = "pop";
-        span.append(effectNode(EFFECTS[k]));
+        span.append(effectNode(EFFECTS[k] ?? COMBO_EFFECTS[k]));
         preview.append(span);
       }
     }
