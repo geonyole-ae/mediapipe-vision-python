@@ -73,6 +73,7 @@ class App:
         self.mode = None          # "collect" | "recognize" | None
         self.source = None
         self.landmarker = None
+        self.builtin = None       # 수집할 때 기본 제스처(엄지척 등) 프레임을 거르는 인식기
         self.classifier = None
         self.clock = None
         self.job = None           # root.after 예약 id
@@ -83,6 +84,7 @@ class App:
         self.rec_label = ""
         self.countdown_end = 0.0
         self.saved = 0
+        self.skipped = 0
         self.data_file = None
         self.writer = None
 
@@ -160,8 +162,15 @@ class App:
         ttk.Spinbox(tab, from_=1, to=30, width=8, textvariable=self.every_var).grid(
             row=2, column=1, sticky="w", pady=3)
 
+        self.skip_builtin_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(tab, variable=self.skip_builtin_var,
+                        text="엄지척 같은 기본 제스처로 보이는 프레임은 저장 안 함").grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Label(tab, text="('none'은 이런 손 모양도 필요하므로 거르지 않음)", foreground="gray").grid(
+            row=4, column=0, columnspan=2, sticky="w")
+
         buttons = ttk.Frame(tab)
-        buttons.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 4))
+        buttons.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(10, 4))
         buttons.columnconfigure((0, 1, 2), weight=1)
         self.preview_btn = ttk.Button(buttons, text="▶ 미리보기", command=self.start_preview)
         self.preview_btn.grid(row=0, column=0, sticky="ew", padx=2)
@@ -176,11 +185,11 @@ class App:
             "저장합니다. 손 각도·거리·위치를 바꿔 가며 모으세요.\n"
             "동영상/사진: 녹화 시작을 누르면 손이 보이는 프레임을 모두 저장합니다.\n"
             "제스처당 200~500개를 권장하고, 아무 제스처도 아닌 손을 'none'으로 모아 두면 "
-            "오인식이 줄어듭니다.")).grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 10))
+            "오인식이 줄어듭니다.")).grid(row=6, column=0, columnspan=2, sticky="w", pady=(6, 10))
 
         box = ttk.LabelFrame(tab, text="모은 데이터", padding=6)
-        box.grid(row=5, column=0, columnspan=2, sticky="nsew")
-        tab.rowconfigure(5, weight=1)
+        box.grid(row=7, column=0, columnspan=2, sticky="nsew")
+        tab.rowconfigure(7, weight=1)
         box.columnconfigure(0, weight=1)
         box.rowconfigure(0, weight=1)
         self.count_tree = ttk.Treeview(box, columns=("count",), height=8, selectmode="browse")
@@ -278,8 +287,13 @@ class App:
             self.landmarker = common.create_landmarker(
                 num_hands=1 if mode == "collect" else RECOGNIZE_HANDS,
                 video=not source.is_images)
+            if mode == "collect":
+                self.builtin = common.BuiltinGestureCheck(video=not source.is_images)
         except Exception as e:
             source.close()
+            if self.landmarker is not None:
+                self.landmarker.close()
+                self.landmarker = None
             messagebox.showerror("오류", str(e))
             return False
 
@@ -309,6 +323,9 @@ class App:
         if self.landmarker is not None:
             self.landmarker.close()
             self.landmarker = None
+        if self.builtin is not None:
+            self.builtin.close()
+            self.builtin = None
         self.mode = None
         self.update_controls()
 
@@ -343,6 +360,7 @@ class App:
 
         self.rec_label = label
         self.saved = 0
+        self.skipped = 0
         if self.source.is_camera:
             self.rec_state = "countdown"
             self.countdown_end = time.monotonic() + COUNTDOWN_SEC
@@ -358,12 +376,18 @@ class App:
             self.data_file.flush()
         self.refresh_counts()
         if was_recording:
-            self.status.set(f"'{self.rec_label}' 샘플 {self.saved}개 저장했습니다.")
+            self.status.set(self.saved_message())
         else:
             self.status.set("녹화를 취소했습니다.")
         self.update_controls()
 
-    def process_collect(self, frame, result, hands, texts):
+    def saved_message(self):
+        text = f"'{self.rec_label}' 샘플 {self.saved}개 저장했습니다."
+        if self.skipped:
+            text += f" (기본 제스처로 보여서 건너뜀 {self.skipped}개)"
+        return text
+
+    def process_collect(self, frame, image, ts, result, hands, texts):
         has_hand = bool(result.hand_landmarks)
         if has_hand:
             hands.append(result.hand_landmarks[0])
@@ -376,15 +400,24 @@ class App:
                 self.rec_state = "on"
 
         if self.rec_state == "on":
-            if has_hand and self.frame_idx % max(get_int(self.every_var, 1), 1) == 0:
+            builtin = None
+            if has_hand and self.skip_builtin_var.get() and common.skips_builtin(self.rec_label):
+                builtin = self.builtin.check(image, ts)
+            if builtin:
+                self.skipped += 1
+                texts.append((0.02, 0.21, f"건너뜀: {builtin}", "#ffa500", 13, "w"))
+            elif has_hand and self.frame_idx % max(get_int(self.every_var, 1), 1) == 0:
                 self.writer.writerow([self.rec_label, *common.hand_features(result, 0, frame)])
                 self.saved += 1
-            texts.append((0.02, 0.07, f"● REC  {self.rec_label}  {self.saved}개", "#ff3030", 16, "w"))
+            rec = f"● REC  {self.rec_label}  {self.saved}개"
+            if self.skipped:
+                rec += f"  (건너뜀 {self.skipped})"
+            texts.append((0.02, 0.07, rec, "#ff3030", 16, "w"))
             limit = get_int(self.max_var, 0)
             if limit and self.saved >= limit:
                 self.stop_recording()
                 if not self.source.is_camera:
-                    self.finish(f"'{self.rec_label}' 샘플 {self.saved}개 저장했습니다.")
+                    self.finish(self.saved_message())
         elif self.rec_state == "off":
             texts.append((0.02, 0.07, "미리보기", "#ffffff", 14, "w"))
 
@@ -509,21 +542,23 @@ class App:
             if self.source.is_camera:
                 self.finish("웹캠 프레임을 읽지 못했습니다.")
             elif self.rec_state == "on":
-                self.finish(f"입력이 끝났습니다. '{self.rec_label}' 샘플 {self.saved}개 저장했습니다.")
+                self.finish("입력이 끝났습니다. " + self.saved_message())
             else:
                 self.finish("입력이 끝났습니다.")
             return
 
         image = common.to_mp_image(frame)
+        ts = 0
         if self.source.is_images:
             result = self.landmarker.detect(image)
         else:
-            result = self.landmarker.detect_for_video(image, self.clock.now())
+            ts = self.clock.now()
+            result = self.landmarker.detect_for_video(image, ts)
         self.frame_idx += 1
 
         hands, texts = [], []
         if self.mode == "collect":
-            self.process_collect(frame, result, hands, texts)
+            self.process_collect(frame, image, ts, result, hands, texts)
         else:
             self.process_recognize(frame, result, hands, texts)
         self.show(frame, hands, texts)

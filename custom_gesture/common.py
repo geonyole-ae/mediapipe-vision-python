@@ -10,6 +10,8 @@ from mediapipe.tasks.python import BaseOptions, vision
 
 HERE = Path(__file__).resolve().parent
 HAND_MODEL_PATH = HERE.parent / "models" / "hand_landmarker.task"
+BUILTIN_MODEL_PATH = HERE.parent / "models" / "gesture_recognizer.task"
+NONE_LABEL = "none"  # 아무 제스처도 아닌 손. 기본 제스처 거르기를 하지 않음
 DATA_PATH = HERE / "data" / "gestures.csv"            # collect.py가 쌓는 학습 데이터
 CLASSIFIER_PATH = HERE / "gesture_classifier.joblib"  # train.py가 만드는 분류기
 
@@ -137,6 +139,52 @@ def delete_label(path, label):
     with open(path, "w", newline="", encoding="utf-8") as f:
         csv.writer(f).writerows(kept)
     return len(rows) - len(kept)
+
+
+def skips_builtin(label):
+    """이 라벨을 모을 때 기본 제스처로 보이는 프레임을 거를지 ("none"은 오히려 그런 손 모양이 필요함)"""
+    return label.strip().lower() != NONE_LABEL
+
+
+class BuiltinGestureCheck:
+    """MediaPipe 기본 제스처(Thumb_Up, Pointing_Up 등)로 보이는 프레임인지 확인
+
+    새 제스처를 찍은 영상에는 손 모양을 바꾸는 사이에 엄지척 같은 다른 동작이 섞이기 쉬움.
+    그런 프레임까지 새 제스처로 학습하면 엄지척을 새 제스처로 잘못 인식하므로, 수집할 때 걸러냄.
+    """
+
+    MIN_SCORE = 0.5
+
+    def __init__(self, video=True):
+        if not BUILTIN_MODEL_PATH.exists():
+            raise FileNotFoundError(f"모델 파일이 없습니다: {BUILTIN_MODEL_PATH}")
+        options = vision.GestureRecognizerOptions(
+            base_options=BaseOptions(model_asset_path=str(BUILTIN_MODEL_PATH)),
+            running_mode=vision.RunningMode.VIDEO if video else vision.RunningMode.IMAGE,
+            num_hands=1,
+        )
+        self.recognizer = vision.GestureRecognizer.create_from_options(options)
+        self.video = video
+
+    def check(self, mp_image, timestamp_ms=0):
+        """기본 제스처 이름 (해당 없으면 None)"""
+        if self.video:
+            result = self.recognizer.recognize_for_video(mp_image, timestamp_ms)
+        else:
+            result = self.recognizer.recognize(mp_image)
+        top = result.gestures[0][0] if result.gestures else None
+        if top and top.category_name != "None" and top.score >= self.MIN_SCORE:
+            return top.category_name
+        return None
+
+    def close(self):
+        self.recognizer.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
 
 
 class VideoClock:

@@ -474,7 +474,12 @@ function updatePanel(shown) {
 $("cameraBtn").onclick = useCamera;
 $("fileBtn").onclick = () => $("fileInput").click();
 $("fileInput").onchange = (e) => { openFile(e.target.files[0]); e.target.value = ""; };
-$("sampleBtn").onclick = () => openUrl(SAMPLE_VIDEO, false, "예제 영상");
+$("sampleBtn").onclick = () => {
+  openUrl(SAMPLE_VIDEO, false, "예제 영상");
+  setStatus("예제 영상은 엄지척·브이·검지 위로·엄지 아래 사진으로 만든 영상이라 nike·ok 동작이 없습니다.
+"
+            + "효과가 뜨지 않는 것이 정상입니다 (학습하지 않은 손 모양을 어떻게 처리하는지 보는 용도).");
+};
 $("stopBtn").onclick = () => { stopSource(); setStatus("정지했습니다."); };
 $("scoreRange").oninput = (e) => {
   minScore = Number(e.target.value);
