@@ -1,6 +1,7 @@
 """제스처 사진 4장을 이어 붙여 테스트용 동영상을 만드는 스크립트 (웹캠이 없을 때 테스트용)
 
 실행:  python tools/make_test_video.py samples samples/gestures_test.mp4
+       python tools/make_test_video.py samples samples/gestures_test.webm   # 웹용
 """
 import sys
 import cv2
@@ -9,7 +10,9 @@ import numpy as np
 samples, out = sys.argv[1], sys.argv[2]
 names = ["thumbs_up", "victory", "pointing_up", "thumbs_down"]
 size, fps, secs = 640, 30, 2.5
-writer = cv2.VideoWriter(out, cv2.VideoWriter_fourcc(*"mp4v"), fps, (size, size))
+# 브라우저(web/)에서 재생하려면 .webm으로 저장 (OpenCV 기본 mp4 코덱은 브라우저가 못 읽음)
+fourcc = "VP80" if out.lower().endswith(".webm") else "mp4v"
+writer = cv2.VideoWriter(out, cv2.VideoWriter_fourcc(*fourcc), fps, (size, size))
 for n in names:
     img = cv2.imread(f"{samples}/{n}.jpg")
     h, w = img.shape[:2]
